@@ -154,7 +154,45 @@ async function estadoNotificaciones(){
   if(!("serviceWorker" in navigator)||!("PushManager" in window)){pintar(false);return}
   try{const reg=await navigator.serviceWorker.register("./sw.js",{updateViaCache:"none"});const sub=await reg.pushManager.getSubscription();pintar(!!sub)}catch(e){pintar(false)}
 }
-async function activarNotificaciones(){if(!("serviceWorker" in navigator)||!("PushManager" in window)){alert("Este dispositivo no permite notificaciones push.");return}try{const permiso=await Notification.requestPermission();if(permiso!=="granted"){alert("Las notificaciones no fueron habilitadas.");return}const reg=await navigator.serviceWorker.register("./sw.js",{updateViaCache:"none"});await navigator.serviceWorker.ready;let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:vapidBytes(VAPID_PUBLIC_KEY)});const j=sub.toJSON();const payload={nombre:"Dispositivo SEPTIBRA",rol:"operativo",endpoint:j.endpoint,p256dh:j.keys&&j.keys.p256dh,auth:j.keys&&j.keys.auth,activo:true};let r=await fetch(SUPABASE_URL+"/rest/v1/notificaciones",{method:"POST",headers:{...headers,"Prefer":"return=minimal"},body:JSON.stringify(payload)});if(r.status===409){r=await fetch(SUPABASE_URL+"/rest/v1/notificaciones?endpoint=eq."+encodeURIComponent(j.endpoint),{method:"PATCH",headers:{...headers,"Prefer":"return=minimal"},body:JSON.stringify({p256dh:payload.p256dh,auth:payload.auth,activo:true,nombre:payload.nombre,rol:payload.rol})})}if(!r.ok)throw new Error(await r.text());await estadoNotificaciones();alert("Notificaciones activadas en este dispositivo.")}catch(e){console.error(e);alert("No se pudieron activar las notificaciones.")}}
+async function activarNotificaciones(){
+  const btn=document.getElementById("notifyOnBtn"),note=document.getElementById("notifyStateNote");
+  const textoOriginal=btn?.textContent||"🔔 Activar notificaciones";
+  if(!("Notification" in window)||!("serviceWorker" in navigator)||!("PushManager" in window)){
+    if(note)note.textContent="Este navegador no permite notificaciones push en este dispositivo.";
+    alert("Este navegador no permite notificaciones push en este dispositivo.");
+    return;
+  }
+  if(btn){btn.disabled=true;btn.textContent="⏳ Activando notificaciones…"}
+  try{
+    let permiso=Notification.permission;
+    if(permiso==="default")permiso=await Notification.requestPermission();
+    if(permiso!=="granted"){
+      const mensaje=permiso==="denied"
+        ?"Las notificaciones están bloqueadas en el navegador. En la barra de direcciones, abrí el candado o el icono de controles, permití Notificaciones para SEPTIBRA y volvé a tocar este botón."
+        :"No se concedió permiso para mostrar notificaciones.";
+      if(note)note.textContent=mensaje;
+      alert(mensaje);
+      return;
+    }
+    const reg=await navigator.serviceWorker.register("./sw.js",{updateViaCache:"none"});
+    await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:vapidBytes(VAPID_PUBLIC_KEY)});
+    const j=sub.toJSON();
+    const payload={nombre:"Dispositivo SEPTIBRA",rol:"operativo",endpoint:j.endpoint,p256dh:j.keys&&j.keys.p256dh,auth:j.keys&&j.keys.auth,activo:true};
+    let r=await fetch(SUPABASE_URL+"/rest/v1/notificaciones",{method:"POST",headers:{...headers,"Prefer":"return=minimal"},body:JSON.stringify(payload)});
+    if(r.status===409)r=await fetch(SUPABASE_URL+"/rest/v1/notificaciones?endpoint=eq."+encodeURIComponent(j.endpoint),{method:"PATCH",headers:{...headers,"Prefer":"return=minimal"},body:JSON.stringify({p256dh:payload.p256dh,auth:payload.auth,activo:true,nombre:payload.nombre,rol:payload.rol})});
+    if(!r.ok)throw new Error(await r.text());
+    await estadoNotificaciones();
+    alert("Notificaciones activadas en este dispositivo.");
+  }catch(e){
+    console.error(e);
+    if(note)note.textContent="No se pudieron activar las notificaciones. Revisá el permiso del navegador e intentá nuevamente.";
+    alert("No se pudieron activar las notificaciones. Revisá el permiso del navegador e intentá nuevamente.");
+  }finally{
+    if(btn){btn.disabled=false;if(btn.textContent.includes("Activando"))btn.textContent=textoOriginal}
+  }
+}
 async function desactivarNotificaciones(){if(!("serviceWorker" in navigator)||!("PushManager" in window)){alert("Este dispositivo no permite notificaciones push.");return}try{const reg=await navigator.serviceWorker.register("./sw.js",{updateViaCache:"none"});await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription();if(!sub){await estadoNotificaciones();alert("Las notificaciones ya están desactivadas en este dispositivo.");return}const endpoint=sub.endpoint;try{await fetch(SUPABASE_URL+"/rest/v1/notificaciones?endpoint=eq."+encodeURIComponent(endpoint),{method:"PATCH",headers:{...headers,"Prefer":"return=minimal"},body:JSON.stringify({activo:false})})}catch(e){console.error("No se pudo desactivar el registro remoto",e)}await sub.unsubscribe();await estadoNotificaciones();alert("Notificaciones desactivadas en este dispositivo.")}catch(e){console.error(e);alert("No se pudieron desactivar las notificaciones.")}}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 function elapsed(iso){if(!iso)return"";const ms=Math.max(0,Date.now()-new Date(iso).getTime()),m=Math.floor(ms/60000),h=Math.floor(m/60);return h?String(h).padStart(2,"0")+" h "+String(m%60).padStart(2,"0")+" min":String(m).padStart(2,"0")+" min"}
