@@ -36,8 +36,8 @@ $('changeForm').onsubmit=async event=>{
  finally{saving=false;$('cancel').disabled=false;$('save').disabled=false;}
 };
 $('loginForm').onsubmit=async event=>{
- event.preventDefault();$('enter').disabled=true;message('');const mine=++epoch;
- try{const result=await request('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:$('email').value.trim(),password:$('password').value})},null);$('password').value='';if(mine!==epoch)return;session={access_token:result.access_token};
+ event.preventDefault();const username=$('username').value.trim().toLowerCase();if(!/^[a-z0-9][a-z0-9._-]{2,39}$/.test(username)){message('Revisá el usuario: entre 3 y 40 caracteres, sin espacios ni tildes.');return;}$('enter').disabled=true;message('');const mine=++epoch;
+ try{const result=await request('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:username+'@usuarios.septibra.invalid',password:$('password').value})},null);$('password').value='';if(mine!==epoch)return;session={access_token:result.access_token};
  const profiles=await request('/rest/v1/piloto_perfiles?select=usuario_id,institucion_id,nombre,rol,activo');if(mine!==epoch)return;if(profiles.length!==1)throw new Error('Tu cuenta no tiene acceso asignado al piloto. Consultá a la persona responsable.');profile=profiles[0];
  const [ps,orgs]=await Promise.all([request('/rest/v1/piloto_pisos?select=*&order=orden,nombre'),request('/rest/v1/piloto_instituciones?select=nombre')]);if(mine!==epoch)return;floors=ps;$('floor').replaceChildren(option('','Todos los pisos'),...floors.map(f=>option(f.id,f.nombre)));$('state').replaceChildren(option('','Todos los estados'),...Object.entries(STATES).map(([k,v])=>option(k,v[0])));$('identity').textContent=profile.nombre+' · '+ROLES[profile.rol];$('institution').textContent=orgs[0]?.nombre||'Camas por piso';$('login').hidden=true;$('board').hidden=false;
  await load();if(mine!==epoch)return;timer=setInterval(()=>{if(!document.hidden)load();},15000);expiryTimer=setTimeout(()=>{clearSession();message('La sesión venció. Volvé a ingresar.');},Math.max(0,(result.expires_in||3600)-30)*1000);
@@ -48,3 +48,7 @@ $('logout').onclick=async()=>{const token=session?.access_token;clearSession();m
 $('reload').onclick=load;$('floor').onchange=render;$('state').onchange=render;
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)load();});
 // Sesión solo en memoria; no almacena contraseñas, tokens ni datos de camas en el dispositivo.
+
+// Cada usuario se provisiona administrativamente con identidad interna
+// <usuario>@usuarios.septibra.invalid. No es un correo de contacto ni recibe mensajes.
+// El rol procede exclusivamente de piloto_perfiles, nunca del formulario de ingreso.
