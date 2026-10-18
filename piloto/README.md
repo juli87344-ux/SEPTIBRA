@@ -9,13 +9,13 @@ Implementación inicial independiente de la aplicación operativa.
 - Roles enfermeria, limpieza y supervision asignados en piloto_perfiles por administración; sin autoasignación ni registro público en la interfaz.
 - Actualización de estado y auditoría atómicas mediante triggers. Hora e identidad determinadas en servidor.
 - Checklist requerido y persistido al pasar de En limpieza a Lista.
-- Cliente estático con login por correo y contraseña usando Supabase Auth; sesión solo en memoria y nuevo ingreso al vencer. Sin registro público ni recuperación de contraseña implementada aún.
+- Cliente estático con login por usuario y clave usando Supabase Auth; sesión solo en memoria y nuevo ingreso al vencer. Sin registro público ni recuperación de contraseña implementada aún.
 - Notificaciones piloto pendientes, deshabilitadas. No se conecta al emisor ni a suscripciones operativas.
 - No publicado. Ningún cambio en index.html de producción.
 
 ## Primer acceso pendiente
 
-Hay que crear una cuenta personal mediante el mecanismo administrativo de Supabase Auth y asignar su usuario_id, nombre, rol e institucion_id en piloto_perfiles. No reutilizar contraseñas compartidas ni introducir claves service_role en el navegador. El correo para el primer acceso todavía no fue indicado.
+Hay que crear una cuenta personal mediante el mecanismo administrativo de Supabase Auth y asignar su usuario_id, nombre, rol e institucion_id en piloto_perfiles. No reutilizar contraseñas compartidas ni introducir claves service_role en el navegador. El usuario para el primer acceso todavía no fue indicado. Cada usuario debe ser único en el piloto, tener de 3 a 40 caracteres y usar letras ASCII minúsculas, números, punto, guion o guion bajo; debe comenzar con letra o número. Se normaliza a minúsculas. La identidad interna de Auth será <usuario>@usuarios.septibra.invalid (no es correo de contacto y no recibe mensajes). Crear administrativamente la cuenta con esa identidad, sin enviar invitación por correo, y asignar el perfil. El nombre completo visible se guarda por separado. La función no se elige al iniciar sesión. Recuperación de clave y aprovisionamiento administrativo pendientes; nunca pedir ni publicar claves en el chat.
 
 El archivo config.mjs contiene únicamente la URL y la clave pública anon existente, validada antes de reutilizarla. Ningún token administrativo ni contraseña se incluye.
 
