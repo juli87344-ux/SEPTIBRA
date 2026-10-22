@@ -5,19 +5,7 @@ self.addEventListener("install", () => {
 });
 
 self.addEventListener("activate", event => {
-  event.waitUntil((async()=>{
-    await self.clients.claim();
-    const lista=await self.clients.matchAll({type:"window",includeUncontrolled:true});
-    for(const cliente of lista){
-      try{
-        const u=new URL(cliente.url);
-        if(u.origin===self.location.origin && u.searchParams.get("appv")!=="6"){
-          u.searchParams.set("appv","6");
-          await cliente.navigate(u.toString());
-        }
-      }catch(e){}
-    }
-  })());
+  event.waitUntil(self.clients.claim());
 });
 
 
@@ -80,7 +68,7 @@ self.addEventListener("notificationclick", event => {
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(lista => {
       for (const cliente of lista) {
-        if ("focus" in cliente) {
+        if (cliente.url.startsWith(self.registration.scope) && "focus" in cliente) {
           return cliente.focus();
         }
       }
