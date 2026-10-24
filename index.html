@@ -115,6 +115,7 @@ const SUPABASE_KEY="sb_publishable_XZQEiAZsC2cVk5liN3fu6g_6UN3K9-3";
 const STATES={ocupada:["Ocupada","🔴"],alta_espera:["Alta / Traslado","🟣"],liberada:["Liberada / limpiar","🟡"],en_limpieza:["En limpieza","🟠"],lista:["Lista","🟢"],reservada:["Reservada","🔵"]};
 let camas=[],filtro=localStorage.getItem("libratsalud_filtro")||"todas",seleccion=null,vista=localStorage.getItem("libratsalud_vista")||"pantalla";const cambiosEnCurso=new Set();
 let superPeriodo="7";
+let cargaVersion=0;
 const headers={"apikey":SUPABASE_KEY,"Authorization":"Bearer "+SUPABASE_KEY,"Content-Type":"application/json","Prefer":"return=minimal"};
 
 const VAPID_PUBLIC_KEY="BE4mcExiOAFq0w1lfLBSaJmMbHGCOyTx_cLnZsCLaEJjrCoCMa4gau11hdqE_Q0wp93qd-qXnTnyJxFqNEK6uvc";
@@ -238,20 +239,43 @@ function setView(v){
  render();
 }
 function mostrarToast(msg){const el=document.getElementById("toast");if(!el)return;el.textContent=msg;el.classList.add("show");clearTimeout(window.__toastTimer);window.__toastTimer=setTimeout(()=>el.classList.remove("show"),1800)}
-async function refrescarManual(btn){if(btn){btn.disabled=true;btn.textContent="…"}try{await cargar();mostrarToast("✓ Panel actualizado")}finally{if(btn){btn.disabled=false;btn.textContent="↻"}}}
-async function cargar(){try{const r=await fetch(SUPABASE_URL+"/rest/v1/camas?select=*&order=habitacion,cama",{headers,cache:"no-store"});if(!r.ok)throw new Error(await r.text());camas=await r.json();const st=document.getElementById("status");st.className="status connection-ok";st.textContent="● Sistema conectado · "+camas.length+" camas · Actualizado "+new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});render()}catch(e){const st=document.getElementById("status");st.className="status connection-bad";st.textContent="● Sin conexión · se reintentará automáticamente";console.error(e)}}
+async function refrescarManual(btn){if(btn){btn.disabled=true;btn.textContent="…"}try{if(await cargar())mostrarToast("✓ Panel actualizado")}finally{if(btn){btn.disabled=false;btn.textContent="↻"}}}
+async function cargar(){
+ const version=++cargaVersion;
+ try{
+  const r=await fetch(SUPABASE_URL+"/rest/v1/camas?select=*&order=habitacion,cama",{headers,cache:"no-store"});
+  if(!r.ok)throw new Error(await r.text());
+  const data=await r.json();
+  if(version!==cargaVersion)return false;
+  camas=data;
+  if(seleccion&&!cambiosEnCurso.has(String(seleccion.habitacion)+"|"+String(seleccion.cama))){
+   const actual=camas.find(c=>c.habitacion===seleccion.habitacion&&c.cama===seleccion.cama);
+   if(!actual||actual.estado!==seleccion.estado||actual.actualizado!==seleccion.actualizado){
+    cerrarModal();mostrarToast("La cama cambió. Volvé a seleccionarla.");
+   }
+  }
+  const st=document.getElementById("status");st.className="status connection-ok";
+  st.textContent="● Sistema conectado · "+camas.length+" camas · Actualizado "+new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+  render();return true;
+ }catch(e){
+  if(version!==cargaVersion)return false;
+  const st=document.getElementById("status");st.className="status connection-bad";
+  st.textContent="● No se pudo actualizar · se reintentará automáticamente";console.error(e);return false;
+ }
+}
 function render(){
  renderFilters();
  let data=filtro==="todas"?[...camas]:filtro==="por_limpiar"?camas.filter(c=>c.estado==="liberada"||c.estado==="en_limpieza"):camas.filter(c=>c.estado===filtro);
  if(vista==="prioridad"){
-  data=camas.filter(c=>["liberada","en_limpieza","alta_espera","reservada"].includes(c.estado));
+  data=data.filter(c=>["liberada","en_limpieza","alta_espera","reservada"].includes(c.estado));
   const p={liberada:0,en_limpieza:1,alta_espera:2,reservada:3};
   data.sort((a,b)=>(p[a.estado]??9)-(p[b.estado]??9)||new Date(a.estado_desde||a.actualizado)-new Date(b.estado_desde||b.actualizado));
  }
  if(vista==="compacto"){
   const roomsEl=document.getElementById("rooms");
   roomsEl.className="rooms compacto";
-  const sorted=[...camas].sort((a,b)=>Number(a.habitacion)-Number(b.habitacion)||String(a.cama).localeCompare(String(b.cama),"es",{numeric:true}));
+  const sorted=[...data].sort((a,b)=>Number(a.habitacion)-Number(b.habitacion)||String(a.cama).localeCompare(String(b.cama),"es",{numeric:true}));
+  if(!sorted.length){roomsEl.innerHTML='<div class="empty-state">No hay camas en este estado.</div>';return}
   roomsEl.innerHTML='<div class="compact-bed-grid">'+sorted.map(c=>'<button class="compact-bed '+esc(c.estado)+'" onclick="abrirModal(\''+esc(c.habitacion)+'\',\''+esc(c.cama)+'\')"><b>Hab. '+esc(c.habitacion)+' · '+esc(c.cama)+'</b><small>'+(STATES[c.estado]?.[1]||"")+' '+esc(STATES[c.estado]?.[0]||c.estado)+'</small>'+((c.operador_estado||c.responsable)?'<small>👤 '+esc(c.operador_estado||c.responsable)+'</small>':'')+'</button>').join("")+'</div>';
   return;
  }
@@ -269,47 +293,55 @@ function render(){
  const doubles=keys.filter(h=>(roomSizes[h]||0)>1), singles=keys.filter(h=>(roomSizes[h]||0)===1);
  const card=h=>{const bs=groups[h];const delayed=bs.some(c=>c.estado==="liberada"&&Date.now()-new Date(c.estado_desde||c.actualizado).getTime()>=1800000);const order=["liberada","en_limpieza","alta_espera","reservada","ocupada","lista"];const roomState=order.find(st=>bs.some(c=>c.estado===st))||"lista";return '<article class="room roomstate-'+roomState+' '+(delayed?'delayed':'')+'"><div class="roomscene '+((roomSizes[h]||bs.length)>1?'double-room':'single-room')+'"><span class="scene-label">'+esc(h)+'<small>'+((roomSizes[h]||bs.length)===1?'Individual':'Doble')+'</small></span><i class="scene-bed"></i><i class="scene-bed second-bed"></i></div>'+(delayed?'<div class="room-alert"><span class="delaybadge">⚠ +30 min</span></div>':'')+'<div class="beds '+(bs.length===1?'one':'')+'">'+bs.map(c=>'<button class="bed '+esc(c.estado)+'" onclick="abrirModal(\''+esc(c.habitacion)+'\',\''+esc(c.cama)+'\')"><span class="bedpic"></span><span class="bed-name">'+esc(c.cama)+'</span><span class="pill">'+(STATES[c.estado]?.[1]||"")+" "+esc(STATES[c.estado]?.[0]||c.estado)+'</span>'+((c.operador_estado||c.responsable)?'<span class="operator">👤 '+esc(c.operador_estado||c.responsable)+'</span>':'')+'</button>').join("")+'</div></article>'};
  const section=(title,list)=>list.length?'<div class="sectionlabel">'+title+'<small>'+list.length+' habitaciones</small></div>'+list.map(card).join(""):"";
- const html=section("Habitaciones dobles",doubles)+section("Habitaciones individuales",singles);roomsEl.innerHTML=html||(vista==="prioridad"?'<div class="empty-state">✓ No hay camas que requieran prioridad en este momento.</div>':'<div class="empty-state">No hay camas en este estado.</div>');
+ const html=section("Habitaciones dobles",doubles)+section("Habitaciones individuales",singles);roomsEl.innerHTML=html||(vista==="prioridad"&&filtro==="todas"?'<div class="empty-state">✓ No hay camas que requieran prioridad en este momento.</div>':'<div class="empty-state">No hay camas en este estado.</div>');
 }
 function actualizarEstadoModal(){if(!seleccion)return;const el=document.getElementById("currentState");if(!el)return;const st=STATES[seleccion.estado]||[seleccion.estado,""];el.innerHTML='<span>'+st[1]+' '+esc(st[0])+'</span>'+(seleccion.estado==="lista"?'<b>Disponible</b>':'')}
-function abrirModal(h,c){seleccion=camas.find(x=>String(x.habitacion)===String(h)&&String(x.cama)===String(c));if(!seleccion)return;document.getElementById("modalTitle").textContent="Habitación "+h+" · Cama "+c;actualizarEstadoModal();document.getElementById("operator").value=localStorage.getItem("libratsalud_operador")||"";document.getElementById("stateButtons").innerHTML=Object.entries(STATES).map(([k,v])=>'<button class="'+k+' '+(seleccion.estado===k?'current':'')+'" '+(seleccion.estado===k?'disabled':'onclick="marcarYTocar(this,\''+k+'\')"')+'>'+v[1]+" "+v[0]+(seleccion.estado===k?' · ACTUAL':'')+'</button>').join("");document.getElementById("modal").classList.add("show")}
-function marcarYTocar(btn,estado){document.querySelectorAll("#stateButtons button").forEach(b=>b.classList.remove("tap-selected"));btn.classList.add("tap-selected");if(seleccion?.estado==="en_limpieza"&&estado==="lista"){setTimeout(abrirChecklist,90);return}setTimeout(()=>cambiar(estado),90)}
+function abrirModal(h,c){cancelarChecklist();seleccion=camas.find(x=>String(x.habitacion)===String(h)&&String(x.cama)===String(c));if(!seleccion)return;document.getElementById("modalTitle").textContent="Habitación "+h+" · Cama "+c;actualizarEstadoModal();document.getElementById("operator").value=localStorage.getItem("libratsalud_operador")||"";document.getElementById("stateButtons").innerHTML=Object.entries(STATES).map(([k,v])=>'<button class="'+k+' '+(seleccion.estado===k?'current':'')+'" '+(seleccion.estado===k?'disabled':'onclick="marcarYTocar(this,\''+k+'\')"')+'>'+v[1]+" "+v[0]+(seleccion.estado===k?' · ACTUAL':'')+'</button>').join("");document.getElementById("modal").classList.add("show")}
+function marcarYTocar(btn,estado){if(!seleccion)return;document.querySelectorAll("#stateButtons button").forEach(b=>b.classList.remove("tap-selected"));btn.classList.add("tap-selected");if(estado==="lista"){abrirChecklist();return}return cambiar(estado)}
 function abrirChecklist(){const box=document.getElementById("cleanChecklist");if(!box)return;document.querySelectorAll(".clean-check").forEach(x=>x.checked=false);document.getElementById("cleanObservations").value="";document.getElementById("stateButtons").style.display="none";document.getElementById("statePrompt").textContent="Para pasar la cama a Lista, completá el checklist de limpieza.";box.classList.add("show");actualizarChecklist()}
 function actualizarChecklist(){const checks=[...document.querySelectorAll(".clean-check")];document.getElementById("finishCleaning").disabled=!checks.length||!checks.every(x=>x.checked)}
 function cancelarChecklist(){document.getElementById("cleanChecklist")?.classList.remove("show");document.getElementById("stateButtons").style.display="grid";document.getElementById("statePrompt").textContent="Seleccioná el nuevo estado.";document.querySelectorAll("#stateButtons button").forEach(b=>b.classList.remove("tap-selected"))}
-function finalizarChecklist(){const checks=[...document.querySelectorAll(".clean-check")];if(!checks.every(x=>x.checked)){alert("Completá todos los puntos del checklist.");return}const obs=document.getElementById("cleanObservations").value.trim();sessionStorage.setItem("libracare_checklist_pending",JSON.stringify({habitacion:seleccion.habitacion,cama:seleccion.cama,fecha:new Date().toISOString(),observaciones:obs}));cambiar("lista")}
+function finalizarChecklist(){const checks=[...document.querySelectorAll(".clean-check")];if(!seleccion||checks.length!==5||!checks.every(x=>x.checked)){alert("Completá todos los puntos del checklist.");return}const obs=document.getElementById("cleanObservations").value.trim();sessionStorage.setItem("libracare_checklist_pending",JSON.stringify({habitacion:seleccion.habitacion,cama:seleccion.cama,fecha:new Date().toISOString(),observaciones:obs}));return cambiar("lista")}
 function cerrarModal(){document.getElementById("modal").classList.remove("show");document.getElementById("cleanChecklist")?.classList.remove("show");const sb=document.getElementById("stateButtons");if(sb)sb.style.display="grid";const sp=document.getElementById("statePrompt");if(sp)sp.textContent="Seleccioná el nuevo estado.";seleccion=null}
 async function enviarNotificacion(title,body){try{const tag="libracare-"+Date.now()+"-"+Math.random().toString(36).slice(2,8);const r=await fetch(EDGE_NOTIFICATION_URL,{method:"POST",headers:{"apikey":SUPABASE_KEY,"Content-Type":"application/json"},body:JSON.stringify({title,body,tag})});if(!r.ok)console.error("No se pudo enviar la notificación",await r.text())}catch(e){console.error("Error enviando notificación",e)}}
 async function cambiar(estado){
  if(!seleccion||seleccion.estado===estado)return cerrarModal();
+ if(estado==="lista"){
+  const checks=[...document.querySelectorAll(".clean-check")];
+  if(!document.getElementById("cleanChecklist").classList.contains("show")||checks.length!==5||!checks.every(x=>x.checked)){abrirChecklist();return}
+ }
+ const origen=seleccion, cama={...seleccion};
  const op=document.getElementById("operator").value.trim();
  if(!op){alert("Ingresá el nombre de quien realiza el cambio.");return}localStorage.setItem("libratsalud_operador",op);
- const key=String(seleccion.habitacion)+"|"+String(seleccion.cama);
+ const key=String(cama.habitacion)+"|"+String(cama.cama);
  if(cambiosEnCurso.has(key))return;
  cambiosEnCurso.add(key);
  try{
   const now=new Date().toISOString();
-  const url=SUPABASE_URL+"/rest/v1/camas?habitacion=eq."+encodeURIComponent(seleccion.habitacion)+"&cama=eq."+encodeURIComponent(seleccion.cama)+"&estado=eq."+encodeURIComponent(seleccion.estado);
+  ++cargaVersion; // Invalida lecturas iniciadas antes de este cambio.
+  const url=SUPABASE_URL+"/rest/v1/camas?habitacion=eq."+encodeURIComponent(cama.habitacion)+"&cama=eq."+encodeURIComponent(cama.cama)+"&estado=eq."+encodeURIComponent(cama.estado)+"&actualizado="+(cama.actualizado==null?"is.null":"eq."+encodeURIComponent(cama.actualizado));
   const patchHeaders={...headers,"Prefer":"return=representation"};
   const r=await fetch(url,{method:"PATCH",headers:patchHeaders,body:JSON.stringify({estado,responsable:op,operador_estado:op,estado_desde:now,actualizado:now})});
   if(!r.ok)throw new Error(await r.text());
   const changed=await r.json();
-  if(!changed.length){alert("Esta cama cambió desde otro dispositivo. Se actualizará la pantalla.");cerrarModal();mostrarToast("✓ Cama actualizada");await cargar();return}
+  if(!changed.length){alert("Esta cama cambió desde otro dispositivo. Se actualizará la pantalla.");if(seleccion===origen)cerrarModal();await cargar();return}
   try{
-   const closeUrl=SUPABASE_URL+"/rest/v1/historial_camas?habitacion=eq."+encodeURIComponent(seleccion.habitacion)+"&cama=eq."+encodeURIComponent(seleccion.cama)+"&fin=is.null";
-   await fetch(closeUrl,{method:"PATCH",headers,body:JSON.stringify({fin:now})});
-   await fetch(SUPABASE_URL+"/rest/v1/historial_camas",{method:"POST",headers,body:JSON.stringify({habitacion:seleccion.habitacion,cama:seleccion.cama,estado,inicio:now,operador:op})});
-  }catch(e){console.error("No se pudo registrar historial",e)}
+   const closeUrl=SUPABASE_URL+"/rest/v1/historial_camas?habitacion=eq."+encodeURIComponent(cama.habitacion)+"&cama=eq."+encodeURIComponent(cama.cama)+"&fin=is.null";
+   const closed=await fetch(closeUrl,{method:"PATCH",headers,body:JSON.stringify({fin:now})});
+   if(!closed.ok)throw new Error(await closed.text());
+   const recorded=await fetch(SUPABASE_URL+"/rest/v1/historial_camas",{method:"POST",headers,body:JSON.stringify({habitacion:cama.habitacion,cama:cama.cama,estado,inicio:now,operador:op})});
+   if(!recorded.ok)throw new Error(await recorded.text());
+  }catch(e){console.error("No se pudo registrar historial",e);alert("La cama cambió de estado, pero el historial no se guardó completo. Avisá a supervisión; no repitas el cambio.")}
   const notices={
-   ocupada:["🔴 SEPTIBRA · Ocupada","Habitación "+seleccion.habitacion+" · Cama "+seleccion.cama+" pasó a ocupada."],
-   alta_espera:["🟣 SEPTIBRA · Alta","Habitación "+seleccion.habitacion+" · Cama "+seleccion.cama+" está en alta / espera traslado."],
-   liberada:["🔔 SEPTIBRA · Limpieza","Habitación "+seleccion.habitacion+" · Cama "+seleccion.cama+" está liberada y requiere limpieza."],
-   en_limpieza:["🟠 SEPTIBRA · Limpieza","Habitación "+seleccion.habitacion+" · Cama "+seleccion.cama+" comenzó la limpieza."],
-   lista:["🟢 SEPTIBRA · Lista","Habitación "+seleccion.habitacion+" · Cama "+seleccion.cama+" está limpia y disponible."],
-   reservada:["🔵 SEPTIBRA · Reservada","Habitación "+seleccion.habitacion+" · Cama "+seleccion.cama+" quedó reservada."]
+   ocupada:["🔴 SEPTIBRA · Ocupada","Habitación "+cama.habitacion+" · Cama "+cama.cama+" pasó a ocupada."],
+   alta_espera:["🟣 SEPTIBRA · Alta","Habitación "+cama.habitacion+" · Cama "+cama.cama+" está en alta / espera traslado."],
+   liberada:["🔔 SEPTIBRA · Limpieza","Habitación "+cama.habitacion+" · Cama "+cama.cama+" está liberada y requiere limpieza."],
+   en_limpieza:["🟠 SEPTIBRA · Limpieza","Habitación "+cama.habitacion+" · Cama "+cama.cama+" comenzó la limpieza."],
+   lista:["🟢 SEPTIBRA · Lista","Habitación "+cama.habitacion+" · Cama "+cama.cama+" está limpia y disponible."],
+   reservada:["🔵 SEPTIBRA · Reservada","Habitación "+cama.habitacion+" · Cama "+cama.cama+" quedó reservada."]
   };
   if(notices[estado])await enviarNotificacion(notices[estado][0],notices[estado][1]);
-  cerrarModal();await cargar();
+  if(seleccion===origen)cerrarModal();await cargar();
  }catch(e){alert("No se pudo actualizar la cama.");console.error(e)}
  finally{cambiosEnCurso.delete(key)}
 }
@@ -324,8 +356,9 @@ async function cargarSupervision(){
  try{
   const desde=inicioPeriodoSuper().toISOString();
   const r=await fetch(SUPABASE_URL+"/rest/v1/historial_camas?select=*&created_at=gte."+encodeURIComponent(desde)+"&order=created_at.desc&limit=5000",{headers});
-  if(r.ok) hist=await r.json();
- }catch(e){console.error("Historial",e)}
+  if(!r.ok)throw new Error(await r.text());
+  hist=await r.json();
+ }catch(e){console.error("Historial",e);document.getElementById("superStats").innerHTML="";document.getElementById("superList").textContent="No se pudo cargar el historial. Reintentá abriendo Supervisión.";["donutLegend","timeBars","operatorBars"].forEach(id=>document.getElementById(id).innerHTML="");document.getElementById("stateDonut").style.background="#eaf1f5";return}
  const mins=x=>x.inicio&&x.fin?Math.max(0,Math.round((new Date(x.fin)-new Date(x.inicio))/60000)):null;
  const wait=hist.filter(x=>x.estado==="liberada").map(mins).filter(x=>x!==null);
  const clean=hist.filter(x=>x.estado==="en_limpieza").map(mins).filter(x=>x!==null);
@@ -372,3 +405,4 @@ function salirSupervision(){sessionStorage.removeItem("libratsalud_super");cerra
 document.getElementById("modal").addEventListener("click",e=>{if(e.target.id==="modal")cerrarModal()});document.getElementById("superModal").addEventListener("click",e=>{if(e.target.id==="superModal")cerrarSupervision()});document.getElementById("settingsModal").addEventListener("click",e=>{if(e.target.id==="settingsModal")cerrarAjustes()});
 cargar();estadoNotificaciones();evaluarUbicacion();setInterval(evaluarUbicacion,60000);setInterval(()=>{if(!document.hidden){render()}},1000);setInterval(()=>{if(!document.hidden)cargar()},15000);
 </script></body></html>
+
